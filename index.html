@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CUDA Index Playground</title>
+<meta name="description" content="把 blockIdx、threadIdx、row、col、記憶體位置，以及 GEMV / GEMM 的資料讀取，用互動畫面連起來看。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f4f5f1; --panel:#ffffff; --ink:#1a1e1c; --muted:#5e6762; --line:#dde2db; --soft:#eef1ec;
+  --x:#d4621f; --y:#0f8a7a; --accent:#76b900; --accent-ink:#3f6600;
+  --b0:hsl(212 75% 60% / .36); --b1:hsl(272 55% 64% / .36); --b2:hsl(150 50% 48% / .34); --b3:hsl(38 85% 56% / .40);
+  --idle:#c3c9c1; --hl:#111513;
+  --code-bg:#141816; --code-ink:#e4e8e2; --code-com:#a6dc3c; --code-kw:#7fb7ff; --code-num:#f2b16b;
+  --mono:'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans:'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  --cs:28px;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0e1110; --panel:#161a18; --ink:#e6ebe5; --muted:#97a19b; --line:#29302c; --soft:#1e2421;
+    --x:#f28c4c; --y:#35c3ad; --accent:#8fd400; --accent-ink:#b9f24c;
+    --b0:hsl(212 75% 62% / .32); --b1:hsl(272 60% 68% / .32); --b2:hsl(150 50% 52% / .30); --b3:hsl(38 85% 58% / .32);
+    --idle:#3b433f; --hl:#f4f7f3; --code-bg:#0a0c0b;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+header.top{max-width:1320px;margin:0 auto;padding:24px 16px 4px;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px}
+header.top h1{margin:0;font-family:var(--mono);font-size:24px;letter-spacing:-.5px}
+header.top h1 span{color:var(--accent-ink)}
+header.top p{margin:0;color:var(--muted);font-size:14px}
+.layout{max-width:1320px;margin:0 auto;padding:16px;display:grid;gap:16px;
+  grid-template-columns:minmax(360px,1fr) minmax(0,1.1fr);
+  grid-template-areas:"params stage" "info stage" "code stage" "mem mem";align-items:start}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+.panel h2{margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:.06em;color:var(--muted);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.panel h2 .tag{font-family:var(--mono);color:var(--accent-ink);background:color-mix(in srgb,var(--accent) 16%,transparent);padding:1px 7px;border-radius:6px;letter-spacing:0}
+.params{grid-area:params}.stage-panel{grid-area:stage}.info{grid-area:info}.code{grid-area:code}.mem{grid-area:mem}
+@media (max-width:900px){
+  .layout{grid-template-columns:minmax(0,1fr);grid-template-areas:"params" "stage" "info" "mem" "code"}
+}
+/* tabs */
+.tabs{display:flex;gap:4px;background:var(--soft);padding:4px;border-radius:10px;margin-bottom:14px}
+.tabs button{flex:1;border:0;background:transparent;color:var(--muted);font:600 14px var(--mono);padding:8px 6px;border-radius:7px;cursor:pointer}
+.tabs button.on{background:var(--panel);color:var(--ink);box-shadow:0 1px 3px rgb(0 0 0 / .12)}
+/* params */
+.prow{display:grid;grid-template-columns:1fr 64px;gap:2px 10px;align-items:center;margin-bottom:10px}
+.prow label{grid-column:1/3;font-size:13px;color:var(--muted)}
+.prow label code{font-family:var(--mono);color:var(--ink)}
+.prow input[type=range]{width:100%;accent-color:var(--accent)}
+.prow input[type=number]{width:64px;font:600 14px var(--mono);padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--soft);color:var(--ink)}
+.prow.disabled{opacity:.55}
+.prow .note{grid-column:1/3;font-size:12px;color:var(--muted)}
+.prow.hidden{display:none}
+.calc{font-family:var(--mono);font-size:12.5px;background:var(--soft);border-radius:8px;padding:10px 12px;margin:6px 0 10px;line-height:1.75;overflow-x:auto}
+.calc b{color:var(--ink)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
+.stat{background:var(--soft);border-radius:8px;padding:6px 8px}
+.stat .n{font:700 18px var(--mono)}
+.stat .l{font-size:11.5px;color:var(--muted)}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+button.b{border:1px solid var(--line);background:var(--panel);color:var(--ink);font:500 13px var(--sans);padding:6px 12px;border-radius:8px;cursor:pointer}
+button.b:hover{border-color:var(--accent)}
+button.b.primary{background:var(--accent);border-color:var(--accent);color:#14200a;font-weight:700}
+/* stage */
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--muted);margin:-4px 0 12px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:4px}
+.legend .sw-idle{border:1.5px dashed var(--idle)}
+.vx{color:var(--x)} .vy{color:var(--y)}
+#stage{overflow-x:auto;padding:4px 2px 8px;min-height:120px}
+.mx{display:grid;gap:2px;width:max-content}
+.ch,.rh{font:500 10.5px var(--mono);color:var(--muted);display:flex;align-items:center;justify-content:center;height:18px}
+.rh{height:auto;justify-content:flex-end;padding-right:4px;min-width:18px}
+.ch.vx,.rh.vx{color:var(--x)} .ch.vy,.rh.vy{color:var(--y)}
+.corner{font:700 10px var(--mono);display:flex;flex-direction:column;align-items:flex-end;justify-content:center;line-height:1.1;padding-right:3px}
+.cell{width:var(--cs);height:var(--cs);border-radius:4px;display:flex;align-items:center;justify-content:center;
+  font:600 calc(var(--cs) * .42)/1 var(--mono);color:var(--ink);cursor:pointer;transition:opacity .12s, background-color .12s;position:relative;user-select:none}
+.cell.small{font-size:calc(var(--cs) * .3)}
+.cell.val{background:var(--soft);border:1px solid var(--line)}
+.cell.idle{background:transparent;border:1.5px dashed var(--idle);color:var(--muted)}
+.has-sel .cell:not(.on):not(.sel):not(.inblock):not(.cross):not(.strong){opacity:.3}
+.has-sel .cell.cross{opacity:.72}
+.cell.sel,.cell.strong{outline:2.5px solid var(--hl);outline-offset:-1px;z-index:2;opacity:1}
+.cell.on.ra{background:color-mix(in srgb,var(--y) 30%,var(--panel));border-color:color-mix(in srgb,var(--y) 55%,transparent)}
+.cell.on.cb{background:color-mix(in srgb,var(--x) 30%,var(--panel));border-color:color-mix(in srgb,var(--x) 55%,transparent)}
+.cell.on.vxv{background:color-mix(in srgb,var(--accent) 28%,var(--panel));border-color:color-mix(in srgb,var(--accent) 55%,transparent)}
+.cell.memhit{outline:2px dashed var(--hl);outline-offset:1px;opacity:1 !important}
+.op{font:700 22px var(--mono);color:var(--muted);align-self:center;padding:0 4px}
+.gemv{display:flex;gap:10px;align-items:flex-start;width:max-content}
+.gemm{display:grid;grid-template-columns:auto auto;gap:10px;width:max-content}
+.gemm .g-a{justify-self:end}.gemm .g-b{align-self:end}
+.gemm .g-corner{display:flex;align-items:flex-end;justify-content:flex-end;font:12px var(--sans);color:var(--muted);text-align:right;padding:0 4px 4px 0}
+.mlabel{font:700 13px var(--mono);margin:6px 0 0;color:var(--muted)}
+.stepper{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.stepper.show{display:flex}
+.stepper input{flex:1;min-width:120px;accent-color:var(--accent)}
+.stepper .kl{font:700 15px var(--mono);min-width:92px}
+/* info */
+.hint{color:var(--muted);font-size:14px;background:var(--soft);border-radius:8px;padding:14px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.pair>div{background:var(--soft);border-radius:8px;padding:8px 10px}
+.lbl{font-size:12px;color:var(--muted);font-family:var(--mono)}
+.big{font:700 20px var(--mono)}
+.eq{font:13px var(--mono);line-height:1.7;padding:6px 0;border-bottom:1px dashed var(--line);overflow-x:auto}
+.eq:last-of-type{border-bottom:0}
+.eq b{font-size:15px}
+.status{margin-top:10px;padding:8px 10px;border-radius:8px;font-size:14px;font-weight:500}
+.status.ok{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.status.no{background:color-mix(in srgb,var(--idle) 45%,transparent)}
+.lock{font-size:12px;color:var(--muted);margin-top:8px}
+.sum{font:13px var(--mono);background:var(--soft);border-radius:8px;padding:8px 10px;margin-top:10px;line-height:1.7;word-break:break-all}
+.sum .cur{outline:1.5px solid var(--hl);border-radius:3px;padding:0 2px}
+/* code */
+.codewrap{position:relative}
+pre.codebox{margin:0;background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:14px 14px;font:11.5px/1.65 var(--mono);overflow-x:auto}
+.ln{display:block;white-space:pre}
+.ln.dim{opacity:.38}
+.ln .ann{color:var(--code-com);font-weight:700}
+.kw{color:var(--code-kw)} .num{color:var(--code-num)}
+#copyBtn{position:absolute;top:8px;right:8px;background:rgb(255 255 255 / .1);color:#e4e8e2;border:1px solid rgb(255 255 255 / .18);font:12px var(--sans);padding:3px 10px;border-radius:6px;cursor:pointer}
+/* memory */
+.memhead{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.memhead h2{margin:0}
+.seg-toggle{display:none;gap:4px;background:var(--soft);padding:3px;border-radius:8px}
+.seg-toggle.show{display:flex}
+.seg-toggle button{border:0;background:transparent;color:var(--muted);font:600 13px var(--mono);padding:4px 12px;border-radius:6px;cursor:pointer}
+.seg-toggle button.on{background:var(--panel);color:var(--ink)}
+.strip{display:flex;overflow-x:auto;padding:4px 2px 10px;gap:0}
+.seg{display:flex;flex-direction:column;padding:0 3px;border-left:2px solid var(--line)}
+.seg:first-child{border-left:0}
+.segl{font:600 11px var(--mono);color:var(--y);height:18px;white-space:nowrap}
+.segc{display:flex;gap:2px}
+.mc{width:30px;height:38px;border-radius:4px;background:var(--soft);display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--mono);cursor:pointer;flex:none;transition:opacity .12s}
+.seg.odd .mc{background:color-mix(in srgb,var(--y) 12%,var(--soft))}
+.mc .i{font-size:9.5px;color:var(--muted)}
+.mc .v{font-size:13px;font-weight:700}
+.mc.peer{background:color-mix(in srgb,var(--accent) 35%,var(--panel)) !important}
+.mc.me{outline:2.5px solid var(--hl);outline-offset:-1px;background:color-mix(in srgb,var(--accent) 55%,var(--panel)) !important}
+.mc:hover{outline:1.5px dashed var(--hl)}
+.memnote{font-size:14px;margin-top:4px;background:var(--soft);border-radius:8px;padding:10px 12px}
+.memnote b{font-family:var(--mono)}
+footer{max-width:1320px;margin:0 auto;padding:4px 16px 32px;color:var(--muted);font-size:12.5px}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>CUDA <span>Index</span> Playground</h1>
+  <p>把 blockIdx、threadIdx、row、col、記憶體位置，以及 GEMV / GEMM 的資料讀取連起來看</p>
+</header>
+
+<main class="layout">
+  <section class="panel params">
+    <h2><span class="tag">F1</span>參數</h2>
+    <div class="tabs" id="tabs">
+      <button data-mode="index" class="on">Index</button>
+      <button data-mode="gemv">GEMV</button>
+      <button data-mode="gemm">GEMM</button>
+    </div>
+    <div id="prows"></div>
+    <div class="calc" id="gridInfo"></div>
+    <div class="stats" id="stats"></div>
+    <div class="btns">
+      <button class="b" id="resetBtn">重設</button>
+      <button class="b" id="regenBtn" style="display:none">重新產生數值</button>
+    </div>
+  </section>
+
+  <section class="panel stage-panel">
+    <h2><span class="tag">F2</span><span id="stageTitle">矩陣主畫面</span></h2>
+    <div class="legend" id="legend"></div>
+    <div id="stage"></div>
+    <div class="stepper" id="stepper">
+      <button class="b" id="kprev" aria-label="上一步">◀ 上一步</button>
+      <input type="range" id="kslider" min="0" value="0" aria-label="k">
+      <button class="b" id="knext" aria-label="下一步">下一步 ▶</button>
+      <button class="b primary" id="kplay">自動播放</button>
+      <span class="kl" id="klabel">k = 0</span>
+    </div>
+  </section>
+
+  <section class="panel info">
+    <h2><span class="tag">F3</span>座標資訊</h2>
+    <div id="info"></div>
+  </section>
+
+  <section class="panel code">
+    <h2><span class="tag">F5</span>Kernel 程式碼</h2>
+    <div class="codewrap"><pre class="codebox" id="code"></pre><button id="copyBtn">複製</button></div>
+  </section>
+
+  <section class="panel mem">
+    <div class="memhead">
+      <h2><span class="tag">F4</span><span id="memTitle">一維記憶體（row-major）</span></h2>
+      <div class="seg-toggle" id="memToggle">
+        <button data-v="A">看 A</button><button data-v="B" class="on">看 B</button>
+      </div>
+    </div>
+    <div class="strip" id="strip"></div>
+    <div class="memnote" id="memnote"></div>
+  </section>
+</main>
+<footer>CUDA Index Playground · 依規格書 v0.3 製作 · 指到格子看資訊，點一下鎖定，按 Esc 解除</footer>
+
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const DEF = {M:10, N:12, K:8, bx:4, by:4};
+const LIM = {index:32, gemv:16, gemm:16};
+const S = {mode:'index', ...DEF, hover:null, lock:null, k:0, memView:'B', memHover:null, timer:null};
+let VA, VB, VX, CELLS = [], MCELLS = [];
+
+const rnd = () => Math.floor(Math.random() * 10);
+const mk = (r, c) => Array.from({length:r}, () => Array.from({length:c}, rnd));
+function regen(){ VA = mk(16,16); VB = mk(16,16); VX = Array.from({length:16}, rnd); }
+regen();
+const cdiv = (a, b) => Math.floor((a + b - 1) / b);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const hue = (bi, bj) => `var(--b${(bi + 2 * bj) % 4})`;
+const ml = (c, b) => (c > 0 && c % b === 0) ? 'margin-left:5px;' : '';
+const mt = (r, b) => (r > 0 && r % b === 0) ? 'margin-top:5px;' : '';
+const yv = i => { let s = 0; for (let k = 0; k < S.K; k++) s += VA[i][k] * VX[k]; return s; };
+const cv = (r, c) => { let s = 0; for (let k = 0; k < S.K; k++) s += VA[r][k] * VB[k][c]; return s; };
+
+function D(){
+  const {mode, M, N, bx} = S;
+  if (mode === 'gemv'){ const gx = cdiv(M, bx); return {bx, by:1, gx, gy:1, TC:gx*bx, TR:1, total:gx*bx, active:M, blocks:gx}; }
+  const by = S.by, gx = cdiv(N, bx), gy = cdiv(M, by);
+  return {bx, by, gx, gy, TC:gx*bx, TR:gy*by, total:gx*gy*bx*by, active:M*N, blocks:gx*gy};
+}
+const sel = () => S.lock || S.hover;
+const same = (a, b) => !!a && !!b && a.i === b.i && a.r === b.r && a.c === b.c;
+function thr(s){
+  const d = D();
+  if (S.mode === 'gemv'){ const i = s.i; return {bix:Math.floor(i/d.bx), tix:i % d.bx, i, valid:i < S.M}; }
+  const {r, c} = s;
+  return {bix:Math.floor(c/d.bx), tix:c % d.bx, biy:Math.floor(r/d.by), tiy:r % d.by, row:r, col:c, valid:r < S.M && c < S.N};
+}
+
+/* ---------- F1 params ---------- */
+const PDEF = [
+  {key:'M',  label:'矩陣列數 <code>M</code>（rows）'},
+  {key:'N',  label:'矩陣行數 <code>N</code>（cols）'},
+  {key:'K',  label:'內積長度 <code>K</code>（A 為 M × K）'},
+  {key:'bx', label:'<code>blockDim.x</code>：一個 block 橫向幾個 thread'},
+  {key:'by', label:'<code>blockDim.y</code>：一個 block 縱向幾個 thread'},
+];
+$('#prows').innerHTML = PDEF.map(p => `<div class="prow" data-key="${p.key}"><label>${p.label}</label>
+  <input type="range" min="1" step="1"><input type="number" min="1" step="1"><div class="note"></div></div>`).join('');
+const maxOf = key => key === 'M' || key === 'N' ? LIM[S.mode] : 16;
+document.querySelectorAll('.prow').forEach(row => {
+  const key = row.dataset.key;
+  const set = v => { v = parseInt(v, 10); if (isNaN(v)) return; S[key] = clamp(v, 1, maxOf(key)); structural(); };
+  row.querySelector('input[type=range]').addEventListener('input', e => set(e.target.value));
+  row.querySelector('input[type=number]').addEventListener('change', e => set(e.target.value));
+});
+function renderParams(){
+  document.querySelectorAll('.prow').forEach(row => {
+    const key = row.dataset.key, max = maxOf(key);
+    const r = row.querySelector('input[type=range]'), n = row.querySelector('input[type=number]');
+    r.max = n.max = max;
+    let val = S[key], disabled = false, hidden = false, note = '';
+    if (key === 'K' && S.mode === 'index') hidden = true;
+    if (key === 'N' && S.mode === 'gemv') hidden = true;
+    if (key === 'by' && S.mode === 'gemv'){ val = 1; disabled = true; note = 'GEMV 使用一維 block，blockDim.y 固定為 1'; }
+    r.value = n.value = val; r.disabled = n.disabled = disabled;
+    row.classList.toggle('disabled', disabled); row.classList.toggle('hidden', hidden);
+    row.querySelector('.note').textContent = note;
+  });
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.mode === S.mode));
+  const d = D();
+  let g;
+  if (S.mode === 'gemv'){
+    g = `gridDim.x = (M + blockDim.x − 1) / blockDim.x<br>　　　　　= (${S.M} + ${d.bx} − 1) / ${d.bx} = <b>${d.gx}</b><br>gridDim.y = <b>1</b><br>→ grid = (${d.gx}, 1)，block = (${d.bx}, 1)`;
+  } else {
+    g = `gridDim.<span class="vx">x</span> = (N + blockDim.x − 1) / blockDim.x<br>　　　　　= (${S.N} + ${d.bx} − 1) / ${d.bx} = <b class="vx">${d.gx}</b><br>` +
+        `gridDim.<span class="vy">y</span> = (M + blockDim.y − 1) / blockDim.y<br>　　　　　= (${S.M} + ${d.by} − 1) / ${d.by} = <b class="vy">${d.gy}</b><br>` +
+        `→ grid = (<span class="vx">${d.gx}</span>, <span class="vy">${d.gy}</span>)，block = (<span class="vx">${d.bx}</span>, <span class="vy">${d.by}</span>)`;
+  }
+  $('#gridInfo').innerHTML = g;
+  $('#stats').innerHTML = [[d.blocks,'block 數'],[d.total,'thread 總數'],[d.active,'有工作'],[d.total - d.active,'閒置（被 if 擋掉）']]
+    .map(([n,l]) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  $('#regenBtn').style.display = S.mode === 'index' ? 'none' : '';
+}
+document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => {
+  if (S.mode === b.dataset.mode) return;
+  S.mode = b.dataset.mode; S.hover = S.lock = S.memHover = null; S.k = 0; stopPlay(); structural();
+}));
+$('#resetBtn').addEventListener('click', () => { Object.assign(S, DEF, {hover:null, lock:null, k:0, memHover:null}); stopPlay(); structural(); });
+$('#regenBtn').addEventListener('click', () => { regen(); buildStage(); buildMem(); update(); });
+
+/* ---------- F2 stage ---------- */
+const stage = $('#stage');
+function cellSize(cols, reserve, lo, hi){
+  const W = stage.clientWidth || 600;
+  return clamp(Math.floor((W - reserve) / cols) - 2, lo, hi);
+}
+function buildStage(){
+  const d = D();
+  let h = '';
+  if (S.mode === 'index'){
+    $('#stageTitle').textContent = '矩陣主畫面：每一格 = 一個 thread';
+    $('#legend').innerHTML = `<span><i style="background:var(--b0)"></i><i style="background:var(--b1)"></i>同色 = 同一個 block</span>
+      <span><i class="sw-idle"></i>虛線格 = 超出矩陣、被 if 擋掉的 thread</span>
+      <span><b class="vx">x → col</b>　<b class="vy">y ↓ row</b></span>`;
+    const cs = cellSize(d.TC, 34 + d.gx * 3, 12, 38);
+    stage.style.setProperty('--cs', cs + 'px');
+    h = `<div class="mx" style="grid-template-columns:28px repeat(${d.TC},auto)"><div class="corner"><span class="vx">x→</span><span class="vy">y↓</span></div>`;
+    for (let c = 0; c < d.TC; c++) h += `<div class="ch vx" style="${ml(c,d.bx)}">${c < S.N ? c : ''}</div>`;
+    for (let r = 0; r < d.TR; r++){
+      h += `<div class="rh vy" style="${mt(r,d.by)}">${r < S.M ? r : ''}</div>`;
+      for (let c = 0; c < d.TC; c++){
+        const ok = r < S.M && c < S.N, st = ml(c,d.bx) + mt(r,d.by);
+        h += ok ? `<div class="cell" data-t="C" data-r="${r}" data-c="${c}" style="background:${hue(Math.floor(c/d.bx), Math.floor(r/d.by))};${st}"></div>`
+                : `<div class="cell idle" data-t="C" data-r="${r}" data-c="${c}" style="${st}"></div>`;
+      }
+    }
+    h += '</div>';
+  } else if (S.mode === 'gemv'){
+    $('#stageTitle').textContent = 'GEMV：y = A · x，一個 thread 算 y 的一格';
+    $('#legend').innerHTML = `<span><i style="background:color-mix(in srgb,var(--y) 30%,var(--panel))"></i>A 的第 i 列</span>
+      <span><i style="background:color-mix(in srgb,var(--accent) 28%,var(--panel))"></i>向量 x</span>
+      <span><i style="background:var(--b0)"></i><i style="background:var(--b1)"></i>y 的同色格 = 同一個 block</span>
+      <span><i class="sw-idle"></i>被 if 擋掉的 thread</span><span>黑框 = 第 k 步讀取的兩格</span>`;
+    const cs = cellSize(S.K + 3, 150, 18, 38);
+    stage.style.setProperty('--cs', cs + 'px');
+    h = `<div class="gemv"><div><div class="mx" style="grid-template-columns:22px repeat(${S.K},auto)"><div class="ch"></div>`;
+    for (let k = 0; k < S.K; k++) h += `<div class="ch">k${k}</div>`;
+    for (let i = 0; i < S.M; i++){
+      h += `<div class="rh vy" style="${mt(i,d.bx)}">${i}</div>`;
+      for (let k = 0; k < S.K; k++) h += `<div class="cell val ra" data-t="A" data-r="${i}" data-c="${k}" style="${mt(i,d.bx)}">${VA[i][k]}</div>`;
+    }
+    h += `</div><div class="mlabel">A（${S.M} × ${S.K}）</div></div><div class="op" style="margin-top:40px">×</div>`;
+    h += `<div><div class="mx" style="grid-template-columns:auto"><div class="ch">x</div>`;
+    for (let k = 0; k < S.K; k++) h += `<div class="cell val vxv" data-t="x" data-r="${k}" data-c="0">${VX[k]}</div>`;
+    h += `</div><div class="mlabel">x（${S.K}）</div></div><div class="op" style="margin-top:40px">=</div>`;
+    h += `<div><div class="mx" style="grid-template-columns:auto"><div class="ch">y</div>`;
+    for (let i = 0; i < d.TC; i++){
+      h += i < S.M ? `<div class="cell small" data-t="y" data-r="${i}" data-c="0" style="background:${hue(Math.floor(i/d.bx),0)};${mt(i,d.bx)}">${yv(i)}</div>`
+                   : `<div class="cell idle" data-t="y" data-r="${i}" data-c="0" style="${mt(i,d.bx)}"></div>`;
+    }
+    h += `</div><div class="mlabel">y（${S.M}）</div></div></div>`;
+  } else {
+    $('#stageTitle').textContent = 'GEMM：C = A · B，一個 thread 算 C 的一格';
+    $('#legend').innerHTML = `<span><i style="background:color-mix(in srgb,var(--y) 30%,var(--panel))"></i>A 的第 row 列</span>
+      <span><i style="background:color-mix(in srgb,var(--x) 30%,var(--panel))"></i>B 的第 col 行</span>
+      <span><i style="background:var(--b0)"></i><i style="background:var(--b1)"></i>C 的同色格 = 同一個 block</span>
+      <span><i class="sw-idle"></i>被 if 擋掉的 thread</span><span>黑框 = 第 k 步讀取的兩格</span>`;
+    const cs = cellSize(S.K + d.TC + 1, 70 + d.gx * 5, 16, 38);
+    stage.style.setProperty('--cs', cs + 'px');
+    let B = `<div class="mx" style="grid-template-columns:repeat(${S.N},auto) 26px">`;
+    for (let c = 0; c < S.N; c++) B += `<div class="ch vx" style="${ml(c,d.bx)}">${c}</div>`;
+    B += '<div class="ch"></div>';
+    for (let k = 0; k < S.K; k++){
+      for (let c = 0; c < S.N; c++) B += `<div class="cell val cb" data-t="B" data-r="${k}" data-c="${c}" style="${ml(c,d.bx)}">${VB[k][c]}</div>`;
+      B += `<div class="rh" style="justify-content:flex-start;padding-left:4px">k${k}</div>`;
+    }
+    B += `</div><div class="mlabel">B（${S.K} × ${S.N}）</div>`;
+    let A = `<div class="mx" style="grid-template-columns:24px repeat(${S.K},auto)">`;
+    for (let r = 0; r < S.M; r++){
+      A += `<div class="rh vy" style="${mt(r,d.by)}">${r}</div>`;
+      for (let k = 0; k < S.K; k++) A += `<div class="cell val ra" data-t="A" data-r="${r}" data-c="${k}" style="${mt(r,d.by)}">${VA[r][k]}</div>`;
+    }
+    A += '<div class="ch"></div>';
+    for (let k = 0; k < S.K; k++) A += `<div class="ch">k${k}</div>`;
+    A += `</div><div class="mlabel" style="text-align:right">A（${S.M} × ${S.K}）</div>`;
+    let C = `<div class="mx" style="grid-template-columns:repeat(${d.TC},auto)">`;
+    for (let r = 0; r < d.TR; r++) for (let c = 0; c < d.TC; c++){
+      const ok = r < S.M && c < S.N, st = ml(c,d.bx) + mt(r,d.by);
+      C += ok ? `<div class="cell small" data-t="C" data-r="${r}" data-c="${c}" style="background:${hue(Math.floor(c/d.bx), Math.floor(r/d.by))};${st}">${cv(r,c)}</div>`
+              : `<div class="cell idle" data-t="C" data-r="${r}" data-c="${c}" style="${st}"></div>`;
+    }
+    C += `</div><div class="mlabel">C（${S.M} × ${S.N}）</div>`;
+    h = `<div class="gemm"><div class="g-corner">B 在上、A 在左<br>兩者在 C 交會</div><div class="g-b">${B}</div><div class="g-a">${A}</div><div class="g-c">${C}</div></div>`;
+  }
+  stage.innerHTML = h;
+  CELLS = [...stage.querySelectorAll('[data-t]')].map(el => ({el, t:el.dataset.t, r:+el.dataset.r, c:+el.dataset.c}));
+  $('#stepper').classList.toggle('show', S.mode !== 'index');
+  const ks = $('#kslider'); ks.max = S.K - 1;
+}
+function selFromEl(el){
+  const t = el.dataset.t, r = +el.dataset.r, c = +el.dataset.c;
+  if (S.mode === 'index') return t === 'C' ? {r, c} : null;
+  if (S.mode === 'gemv') return (t === 'y' || t === 'A') ? {i:r} : null;
+  return t === 'C' ? {r, c} : null;
+}
+stage.addEventListener('mouseover', e => {
+  const el = e.target.closest('[data-t]'); if (!el) return;
+  const s = selFromEl(el);
+  if (s && !same(s, S.hover)){ S.hover = s; update(); }
+});
+stage.addEventListener('mouseleave', () => { if (S.hover){ S.hover = null; update(); } });
+stage.addEventListener('click', e => {
+  const el = e.target.closest('[data-t]'); if (!el) return;
+  const s = selFromEl(el); if (!s) return;
+  S.lock = same(s, S.lock) ? null : s; update();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.lock){ S.lock = null; update(); } });
+
+function updateStage(){
+  const s = sel(), d = D();
+  stage.classList.toggle('has-sel', !!s);
+  const t = s ? thr(s) : null, k = S.k, mh = S.memHover;
+  for (const o of CELLS){
+    let on = false, sl = false, ib = false, cr = false, st = false;
+    if (s){
+      if (S.mode === 'index'){
+        sl = o.r === s.r && o.c === s.c;
+        ib = Math.floor(o.r/d.by) === Math.floor(s.r/d.by) && Math.floor(o.c/d.bx) === Math.floor(s.c/d.bx);
+        cr = o.r === s.r || o.c === s.c;
+      } else if (S.mode === 'gemv'){
+        if (o.t === 'y'){ sl = o.r === s.i; ib = Math.floor(o.r/d.bx) === Math.floor(s.i/d.bx); }
+        else if (t.valid && o.t === 'A'){ on = o.r === s.i; st = on && o.c === k; }
+        else if (t.valid && o.t === 'x'){ on = true; st = o.r === k; }
+      } else {
+        if (o.t === 'C'){ sl = o.r === s.r && o.c === s.c; ib = Math.floor(o.r/d.by) === Math.floor(s.r/d.by) && Math.floor(o.c/d.bx) === Math.floor(s.c/d.bx); }
+        else if (t.valid && o.t === 'A'){ on = o.r === s.r; st = on && o.c === k; }
+        else if (t.valid && o.t === 'B'){ on = o.c === s.c; st = on && o.r === k; }
+      }
+    }
+    const cl = o.el.classList;
+    cl.toggle('on', on); cl.toggle('sel', sl); cl.toggle('inblock', ib); cl.toggle('cross', cr && !sl); cl.toggle('strong', st);
+    cl.toggle('memhit', !!mh && mh.mat === o.t && mh.r === o.r && mh.c === o.c);
+  }
+}
+
+/* ---------- k stepper ---------- */
+const ks = $('#kslider');
+ks.addEventListener('input', () => { S.k = +ks.value; update(); });
+$('#kprev').addEventListener('click', () => { stopPlay(); S.k = Math.max(0, S.k - 1); update(); });
+$('#knext').addEventListener('click', () => { stopPlay(); S.k = Math.min(S.K - 1, S.k + 1); update(); });
+$('#kplay').addEventListener('click', () => {
+  if (S.timer){ stopPlay(); return; }
+  if (S.k >= S.K - 1) S.k = 0;
+  $('#kplay').textContent = '暫停';
+  update();
+  S.timer = setInterval(() => {
+    if (S.k >= S.K - 1){ stopPlay(); return; }
+    S.k++; update();
+  }, 800);
+});
+function stopPlay(){ if (S.timer){ clearInterval(S.timer); S.timer = null; } $('#kplay').textContent = '自動播放'; }
+
+/* ---------- F3 info ---------- */
+function sumHTML(terms){
+  let acc = 0;
+  const parts = terms.map(([a, b], j) => { if (j <= S.k) acc += a * b; const txt = `${a}×${b}`; return j === S.k ? `<span class="cur">${txt}</span>` : txt; });
+  return {shown: parts.slice(0, S.k + 1).join(' + '), acc};
+}
+function renderInfo(){
+  const s = sel();
+  if (!s){
+    const msg = S.mode === 'index' ? '把滑鼠移到矩陣上的任一格試試看。點一下可以鎖定，按 Esc 解除。'
+             : S.mode === 'gemv' ? '把滑鼠移到 y 的任一格（或 A 的任一列），看這個 thread 要讀哪些資料。'
+             : '把滑鼠移到 C 的任一格，看這個 thread 要讀 A 的哪一列、B 的哪一行。';
+    $('#info').innerHTML = `<div class="hint">${msg}</div>`; return;
+  }
+  const t = thr(s), d = D();
+  let h = '';
+  if (S.mode === 'gemv'){
+    h += `<div class="pair"><div><div class="lbl">blockIdx</div><div class="big">(<span class="vx">${t.bix}</span>)</div></div><div><div class="lbl">threadIdx</div><div class="big">(<span class="vx">${t.tix}</span>)</div></div></div>`;
+    h += `<div class="eq">i = blockIdx.<span class="vx">x</span> × blockDim.<span class="vx">x</span> + threadIdx.<span class="vx">x</span><br>　= ${t.bix} × ${d.bx} + ${t.tix} = <b>${t.i}</b></div>`;
+    if (t.valid){
+      const terms = Array.from({length:S.K}, (_, k) => [VA[t.i][k], VX[k]]);
+      const {shown, acc} = sumHTML(terms);
+      h += `<div class="status ok">負責 y[${t.i}] = A 的第 ${t.i} 列 · x</div>`;
+      h += `<div class="sum">第 k = ${S.k} 步：A[${t.i}][${S.k}] = A[${t.i * S.K + S.k}] = <b>${VA[t.i][S.k]}</b>，x[${S.k}] = <b>${VX[S.k]}</b><br>sum = ${shown} = <b>${acc}</b><br>全部 K 步做完：y[${t.i}] = <b>${yv(t.i)}</b></div>`;
+    } else {
+      h += `<div class="status no">i = ${t.i} ≥ M = ${S.M}：被 if 擋掉，這個 thread 什麼都不做</div>`;
+    }
+  } else {
+    h += `<div class="pair"><div><div class="lbl">blockIdx (x, y)</div><div class="big">(<span class="vx">${t.bix}</span>, <span class="vy">${t.biy}</span>)</div></div>
+          <div><div class="lbl">threadIdx (x, y)</div><div class="big">(<span class="vx">${t.tix}</span>, <span class="vy">${t.tiy}</span>)</div></div></div>`;
+    h += `<div class="eq"><span class="vy">row</span> = blockIdx.<span class="vy">y</span> × blockDim.<span class="vy">y</span> + threadIdx.<span class="vy">y</span><br>　　= ${t.biy} × ${d.by} + ${t.tiy} = <b class="vy">${t.row}</b></div>`;
+    h += `<div class="eq"><span class="vx">col</span> = blockIdx.<span class="vx">x</span> × blockDim.<span class="vx">x</span> + threadIdx.<span class="vx">x</span><br>　　= ${t.bix} × ${d.bx} + ${t.tix} = <b class="vx">${t.col}</b></div>`;
+    h += `<div class="eq">idx = <span class="vy">row</span> × N + <span class="vx">col</span>` + (t.valid ? ` = ${t.row} × ${S.N} + ${t.col} = <b>${t.row * S.N + t.col}</b>` : ' = —') + `</div>`;
+    if (!t.valid){
+      const why = [t.row >= S.M ? `row = ${t.row} ≥ M = ${S.M}` : '', t.col >= S.N ? `col = ${t.col} ≥ N = ${S.N}` : ''].filter(Boolean).join('、');
+      h += `<div class="status no">${why}：超出矩陣，被 if 擋掉</div>`;
+    } else if (S.mode === 'index'){
+      h += `<div class="status ok">負責元素 A[${t.row}][${t.col}]</div>`;
+    } else {
+      const terms = Array.from({length:S.K}, (_, k) => [VA[t.row][k], VB[k][t.col]]);
+      const {shown, acc} = sumHTML(terms);
+      h += `<div class="status ok">負責 C[${t.row}][${t.col}] = A 的第 ${t.row} 列 · B 的第 ${t.col} 行</div>`;
+      h += `<div class="sum">第 k = ${S.k} 步：A[${t.row}][${S.k}] = <b>${VA[t.row][S.k]}</b>，B[${S.k}][${t.col}] = <b>${VB[S.k][t.col]}</b><br>sum = ${shown} = <b>${acc}</b><br>全部 K 步做完：C[${t.row}][${t.col}] = <b>${cv(t.row, t.col)}</b></div>`;
+    }
+  }
+  if (S.lock) h += '<div class="lock">已鎖定這一格：再點一次或按 Esc 解除</div>';
+  $('#info').innerHTML = h;
+}
+
+/* ---------- F5 code ---------- */
+function codeLines(){
+  const s = sel(), t = s ? thr(s) : null, d = D(), k = S.k;
+  if (S.mode === 'index'){
+    return [
+      ['__global__ void kernel(float* A, int M, int N) {'],
+      ['    int row = blockIdx.y * blockDim.y + threadIdx.y;', t && `= ${t.row}`],
+      ['    int col = blockIdx.x * blockDim.x + threadIdx.x;', t && `= ${t.col}`],
+      ['    if (row < M && col < N) {', t && (t.valid ? 'true' : 'false')],
+      ['        A[row * N + col] = ...;', t && t.valid && `A[${t.row * S.N + t.col}]`, t && !t.valid],
+      ['    }'], ['}'], [''],
+      [`dim3 block(${d.bx}, ${d.by});`],
+      ['dim3 grid((N + block.x - 1) / block.x,', `= ${d.gx}`],
+      ['          (M + block.y - 1) / block.y);', `= ${d.gy}`],
+      ['kernel<<<grid, block>>>(A, M, N);', `M=${S.M} N=${S.N}`],
+    ];
+  }
+  if (S.mode === 'gemv'){
+    const ok = t && t.valid;
+    let part = 0; if (ok) for (let j = 0; j <= k; j++) part += VA[t.i][j] * VX[j];
+    return [
+      ['__global__ void gemv(const float* A, const float* x,'],
+      ['                     float* y, int M, int K) {'],
+      ['    int i = blockIdx.x * blockDim.x + threadIdx.x;', t && `= ${t.i}`],
+      ['    if (i < M) {', t && (ok ? 'true' : 'false')],
+      ['        float sum = 0.0f;', null, t && !ok],
+      ['        for (int k = 0; k < K; ++k)', ok && `k = ${k}`, t && !ok],
+      ['            sum += A[i * K + k] * x[k];', ok && `${VA[t.i][k]}×${VX[k]} → ${part}`, t && !ok],
+      ['        y[i] = sum;', ok && `y[${t.i}] = ${yv(t.i)}`, t && !ok],
+      ['    }'], ['}'], [''],
+      [`dim3 block(${d.bx});`],
+      ['dim3 grid((M + block.x - 1) / block.x);', `= ${d.gx}`],
+      ['gemv<<<grid, block>>>(A, x, y, M, K);', `M=${S.M} K=${S.K}`],
+    ];
+  }
+  const ok = t && t.valid;
+  let part = 0; if (ok) for (let j = 0; j <= k; j++) part += VA[t.row][j] * VB[j][t.col];
+  return [
+    ['__global__ void gemm(const float* A, const float* B,'],
+    ['                     float* C, int M, int N, int K) {'],
+    ['    int row = blockIdx.y * blockDim.y + threadIdx.y;', t && `= ${t.row}`],
+    ['    int col = blockIdx.x * blockDim.x + threadIdx.x;', t && `= ${t.col}`],
+    ['    if (row < M && col < N) {', t && (ok ? 'true' : 'false')],
+    ['        float sum = 0.0f;', null, t && !ok],
+    ['        for (int k = 0; k < K; ++k)', ok && `k = ${k}`, t && !ok],
+    ['            sum += A[row * K + k] * B[k * N + col];', ok && `${VA[t.row][k]}×${VB[k][t.col]} → ${part}`, t && !ok],
+    ['        C[row * N + col] = sum;', ok && `C[${t.row * S.N + t.col}] = ${cv(t.row, t.col)}`, t && !ok],
+    ['    }'], ['}'], [''],
+    [`dim3 block(${d.bx}, ${d.by});`],
+    ['dim3 grid((N + block.x - 1) / block.x,', `= ${d.gx}`],
+    ['          (M + block.y - 1) / block.y);', `= ${d.gy}`],
+    ['gemm<<<grid, block>>>(A, B, C, M, N, K);', `M=${S.M} N=${S.N} K=${S.K}`],
+  ];
+}
+const ESC = {'<':'&lt;','>':'&gt;','&':'&amp;'};
+const hl = t => t.replace(/(__global__|\bvoid\b|\bint\b|\bfloat\b|\bconst\b|\bif\b|\bfor\b|\bdim3\b)|(\b\d+(?:\.\d+f?)?\b)|([<>&])/g,
+  (m, kw, num, sp) => kw ? `<span class="kw">${kw}</span>` : num ? `<span class="num">${num}</span>` : ESC[sp]);
+function renderCode(){
+  const L = codeLines(), w = Math.max(...L.map(l => l[0].length)) + 2;
+  $('#code').innerHTML = L.map(([src, ann, dim]) => {
+    const a = ann ? `<span class="ann">${' '.repeat(w - src.length)}// ${ann}</span>` : '';
+    return `<span class="ln${dim ? ' dim' : ''}">${hl(src) || ' '}${a}</span>`;
+  }).join('');
+}
+$('#copyBtn').addEventListener('click', () => {
+  const txt = codeLines().map(l => l[0]).join('\n');
+  const done = () => { $('#copyBtn').textContent = '已複製'; setTimeout(() => $('#copyBtn').textContent = '複製', 1200); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, () => fallback(txt, done));
+  else fallback(txt, done);
+});
+function fallback(txt, done){
+  const ta = document.createElement('textarea'); ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); done(); } catch (e) {} ta.remove();
+}
+
+/* ---------- F4 memory ---------- */
+const strip = $('#strip');
+function memSpec(){
+  if (S.mode === 'index') return {mat:'C', rows:S.M, cols:S.N, name:'A', val:null, title:`矩陣 A 攤平成一維（row-major，共 ${S.M * S.N} 格）`};
+  if (S.mode === 'gemv') return {mat:'A', rows:S.M, cols:S.K, name:'A', val:(r,c) => VA[r][c], title:`矩陣 A 在記憶體中的排列（row-major，共 ${S.M * S.K} 格）`};
+  if (S.memView === 'A') return {mat:'A', rows:S.M, cols:S.K, name:'A', val:(r,c) => VA[r][c], title:`矩陣 A 在記憶體中的排列（M × K = ${S.M * S.K} 格）`};
+  return {mat:'B', rows:S.K, cols:S.N, name:'B', val:(r,c) => VB[r][c], title:`矩陣 B 在記憶體中的排列（K × N = ${S.K * S.N} 格）`};
+}
+function buildMem(){
+  const m = memSpec();
+  $('#memTitle').textContent = m.title;
+  $('#memToggle').classList.toggle('show', S.mode === 'gemm');
+  document.querySelectorAll('#memToggle button').forEach(b => b.classList.toggle('on', b.dataset.v === S.memView));
+  let h = '';
+  for (let r = 0; r < m.rows; r++){
+    h += `<div class="seg${r % 2 ? ' odd' : ''}"><div class="segl">${m.mat === 'B' ? 'k' : 'row'} ${r}</div><div class="segc">`;
+    for (let c = 0; c < m.cols; c++){
+      const idx = r * m.cols + c;
+      h += `<div class="mc" data-idx="${idx}"><span class="i">${idx}</span>${m.val ? `<span class="v">${m.val(r,c)}</span>` : ''}</div>`;
+    }
+    h += '</div></div>';
+  }
+  strip.innerHTML = h;
+  strip.scrollLeft = 0;
+  MCELLS = [...strip.querySelectorAll('.mc')];
+}
+document.querySelectorAll('#memToggle button').forEach(b => b.addEventListener('click', () => { S.memView = b.dataset.v; buildMem(); update(); }));
+strip.addEventListener('mouseover', e => {
+  const el = e.target.closest('.mc'); if (!el) return;
+  const idx = +el.dataset.idx, m = memSpec(), r = Math.floor(idx / m.cols), c = idx % m.cols;
+  if (S.mode === 'index'){ const s = {r, c}; if (!same(s, S.hover)){ S.hover = s; update(); } }
+  else { S.memHover = {mat:m.mat, r, c}; updateStage(); }
+});
+strip.addEventListener('mouseleave', () => { if (S.mode === 'index'){ S.hover = null; update(); } else { S.memHover = null; updateStage(); } });
+strip.addEventListener('click', e => {
+  if (S.mode !== 'index') return;
+  const el = e.target.closest('.mc'); if (!el) return;
+  const idx = +el.dataset.idx, s = {r:Math.floor(idx / S.N), c:idx % S.N};
+  S.lock = same(s, S.lock) ? null : s; update();
+});
+function updateMem(){
+  const s = sel(), d = D(), k = S.k;
+  let me = -1, peers = [], note = '';
+  if (!s){
+    note = S.mode === 'index' ? '矩陣在記憶體裡是一條直線：先放完第 0 列，再放第 1 列……所以 idx = row × N + col。'
+         : S.mode === 'gemv' ? '選一個 thread，再用 k 的按鈕一步一步走，看同一個 block 的 thread 每一步讀 A 的哪些位置。'
+         : '選 C 的一格，再切換「看 A / 看 B」，比較同一列 thread 每一步讀取的位置。';
+  } else {
+    const t = thr(s);
+    if (!t.valid) note = '這個 thread 超出範圍，被 if 擋掉，不會讀寫記憶體。';
+    else if (S.mode === 'index'){
+      me = t.row * S.N + t.col;
+      note = `第 <b>${t.row}</b> 列從 idx = ${t.row} × ${S.N} = <b>${t.row * S.N}</b> 開始，再往右 <b>${t.col}</b> 格，就是 idx = <b>${me}</b>。`;
+    } else if (S.mode === 'gemv'){
+      me = t.i * S.K + k;
+      for (let j = 0; j < d.bx; j++){ const i2 = t.bix * d.bx + j; if (i2 < S.M) peers.push(i2 * S.K + k); }
+      note = peers.length > 1
+        ? `k = <b>${k}</b> 時，block ${t.bix} 的 ${peers.length} 個 thread 同時讀 A[${peers.join(']、A[')}]：每個相隔 <b>K = ${S.K}</b> 格，<b>不連續</b>。這就是 naive GEMV 讀取效率差的原因。`
+        : `k = <b>${k}</b> 時，這個 thread 讀 A[${me}]（block 裡只有它一個有效 thread）。`;
+    } else {
+      for (let j = 0; j < d.bx; j++){ const c2 = t.bix * d.bx + j; if (c2 < S.N) peers.push(S.memView === 'B' ? k * S.N + c2 : t.row * S.K + k); }
+      me = S.memView === 'B' ? k * S.N + t.col : t.row * S.K + k;
+      if (S.memView === 'B') note = `k = <b>${k}</b> 時，同一個 block 中 threadIdx.y = ${t.tiy} 的 ${peers.length} 個 thread 讀 B[${peers.join(']、B[')}]：位址相鄰 1 格，<b>連續</b>。`;
+      else note = `k = <b>${k}</b> 時，同一個 block 中 threadIdx.y = ${t.tiy} 的 ${peers.length} 個 thread 全部讀 A[${me}]：<b>同一個位址</b>。`;
+    }
+  }
+  const P = new Set(peers);
+  MCELLS.forEach((el, idx) => { el.classList.toggle('me', idx === me); el.classList.toggle('peer', P.has(idx) && idx !== me); });
+  $('#memnote').innerHTML = note;
+  if (me >= 0 && MCELLS[me]){
+    const el = MCELLS[me], L = el.offsetLeft - strip.offsetLeft, R = L + el.offsetWidth;
+    if (L < strip.scrollLeft + 20 || R > strip.scrollLeft + strip.clientWidth - 20) strip.scrollLeft = L - strip.clientWidth / 2;
+  }
+}
+
+/* ---------- orchestration ---------- */
+function validSel(s){
+  if (!s) return null;
+  const d = D();
+  if (S.mode === 'gemv') return (s.i !== undefined && s.i < d.TC) ? s : null;
+  return (s.r !== undefined && s.r < d.TR && s.c < d.TC) ? s : null;
+}
+function structural(){
+  for (const key of ['M','N','K','bx','by']) S[key] = clamp(S[key], 1, maxOf(key));
+  S.k = clamp(S.k, 0, S.K - 1);
+  S.hover = validSel(S.hover); S.lock = validSel(S.lock); S.memHover = null;
+  renderParams(); buildStage(); buildMem(); update();
+}
+function update(){
+  updateStage(); renderInfo(); renderCode(); updateMem();
+  ks.value = S.k; $('#klabel').textContent = `k = ${S.k} / ${S.K - 1}`;
+}
+let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { buildStage(); update(); }, 150); });
+structural();
+})();
+</script>
+</body>
+</html>
