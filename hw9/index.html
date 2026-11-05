@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CUDA Playbook · CUDA 互動學習手冊</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body data-page="home" data-root="./">
+  <main class="wrap">
+    <section class="home-hero">
+      <div class="kicker">CUDA Playbook</div>
+      <h1>CUDA 互動學習手冊</h1>
+      <p>每個 Lab 只講一個 GPU 程式設計的核心概念，配一個可以動手調參數的互動區、
+         一段對應的 kernel 程式碼，和幾題自我檢查。從「每個 thread 算哪一格」開始，慢慢走到效能優化。</p>
+    </section>
+
+    <div id="filters" class="filters" aria-label="依標籤篩選"></div>
+    <div id="lab-grid" class="lab-grid"></div>
+
+    <section class="block">
+      <h2 data-label="EXTRA">延伸</h2>
+      <p>想看 2D 索引、GEMV / GEMM 的資料讀取動畫，可以玩我之前做的完整版
+        <a href="legacy/cuda-index-playground/">CUDA Index Playground</a>。</p>
+    </section>
+  </main>
+
+  <script src="data/labs.js"></script>
+  <script src="assets/js/site.js"></script>
+</body>
+</html>

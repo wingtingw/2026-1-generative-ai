@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lab 01 · CUDA Playbook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="../../assets/css/style.css">
+</head>
+<body data-page="lab" data-lab="01-thread-indexing" data-root="../../">
+  <main class="wrap">
+    <div id="lab-head"></div>
+
+    <section class="block" id="goal">
+      <h2 data-label="1">目標</h2>
+      <p class="goal">知道每個 thread 怎麼用 <code>blockIdx</code>、<code>blockDim</code>、<code>threadIdx</code> 算出自己負責的那一格，以及 grid 要開多大才不會漏掉資料。</p>
+    </section>
+
+    <section class="block" id="concept">
+      <h2 data-label="2">概念</h2>
+      <p>啟動 kernel 時，GPU 會開出一個 <code>grid</code>（網格），裡面有 <code>gridDim.x</code> 個 <code>block</code>（區塊），
+         每個 block 裡有 <code>blockDim.x</code> 個 <code>thread</code>（執行緒）。每個 thread 跑的是<strong>同一份</strong>程式碼，
+         唯一的差別是它們拿到的編號不同。</p>
+      <p><code>threadIdx.x</code> 只是「我在自己 block 裡的第幾個」，不同 block 之間會重複。
+         要知道「我在整個 grid 裡是第幾個」，就要把前面所有 block 的 thread 數加上去：</p>
+      <div class="formula">i = <span class="vx">blockIdx.x</span> × blockDim.x + <span class="vy">threadIdx.x</span></div>
+      <p>開出來的 thread 總數是 <code>gridDim.x × blockDim.x</code>。它通常不會剛好等於資料長度 <code>N</code>，
+         所以會把 block 數取上限：<code>gridDim.x = ⌈N / blockDim.x⌉</code>，多出來的 thread 用 <code>if (i &lt; N)</code> 擋掉。</p>
+    </section>
+
+    <section class="block" id="playground">
+      <h2 data-label="3">互動區</h2>
+      <div class="playground">
+        <div class="controls" id="controls"></div>
+        <div id="viz"></div>
+        <div class="readout" id="readout">把滑鼠移到 thread 或陣列格子上看詳細資訊</div>
+        <div class="stats" id="stats"></div>
+      </div>
+    </section>
+
+    <section class="block" id="code">
+      <h2 data-label="4">Kernel 程式碼</h2>
+<pre class="code"><span class="k">__global__</span> <span class="k">void</span> addOne(<span class="k">float</span>* a, <span class="k">int</span> N) {
+    <span class="k">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;  <span class="c">// 全域索引</span>
+    <span class="k">if</span> (i &lt; N) {                                    <span class="c">// 邊界檢查：多開的 thread 什麼都不做</span>
+        a[i] += <span class="n">1.0f</span>;
+    }
+}
+
+<span class="c">// host 端：block 數取上限，確保 N 個元素都有人處理</span>
+<span class="k">int</span> threads = <span class="n">256</span>;
+<span class="k">int</span> blocks  = (N + threads - <span class="n">1</span>) / threads;   <span class="c">// = ceil(N / threads)</span>
+addOne&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(d_a, N);</pre>
+    </section>
+
+    <section class="block" id="pitfalls">
+      <h2 data-label="5">常見誤區</h2>
+      <ul class="pitfalls">
+        <li><strong>只用 threadIdx.x 當索引：</strong>每個 block 都會從 0 開始，結果所有 block 都在改前 <code>blockDim.x</code> 格，後面的資料沒人碰。</li>
+        <li><strong>block 數用 N / threads（整數除法）：</strong>會無條件捨去，最後不滿一個 block 的那幾筆資料被漏掉。要用 <code>(N + threads - 1) / threads</code>。</li>
+        <li><strong>忘了 if (i &lt; N)：</strong>取上限後一定會多開 thread，它們會讀寫陣列範圍外的記憶體，可能讓程式當掉或悄悄寫壞別的資料。</li>
+      </ul>
+      <p class="callout tip">實務上 <code>blockDim.x</code> 通常選 32 的倍數（例如 128、256），因為 GPU 以 32 個 thread（一個 warp）為單位排程。這會在 Lab 03 看到。</p>
+    </section>
+
+    <section class="block" id="check">
+      <h2 data-label="6">自我檢查</h2>
+      <details class="quiz">
+        <summary>blockDim.x = 8、N = 30，需要幾個 block？會有幾個 thread 被 if 擋掉？</summary>
+        <div class="answer">⌈30 / 8⌉ = 4 個 block，共 32 個 thread，其中 i = 30、31 這 2 個被擋掉。可以在互動區設定 N = 30、blockDim = 8 後按「自動算 gridDim」驗證。</div>
+      </details>
+      <details class="quiz">
+        <summary>blockIdx.x = 2、threadIdx.x = 5、blockDim.x = 16，這個 thread 負責哪一格？</summary>
+        <div class="answer">i = 2 × 16 + 5 = 37。</div>
+      </details>
+      <details class="quiz">
+        <summary>把 gridDim.x 調得比需要的少，陣列會發生什麼事？</summary>
+        <div class="answer">thread 總數小於 N，後面的元素沒有任何 thread 負責（互動區裡會變成橘色），結果就是那幾格沒被計算到，而且程式不會報錯。</div>
+      </details>
+    </section>
+
+    <section class="block" id="refs">
+      <h2 data-label="7">參考資料</h2>
+      <ul>
+        <li><a href="https://docs.nvidia.com/cuda/cuda-c-programming-guide/">CUDA C++ Programming Guide</a> — Programming Model：Kernels、Thread Hierarchy</li>
+        <li><a href="../../legacy/cuda-index-playground/">CUDA Index Playground（完整版）</a> — 2D 索引與 GEMV / GEMM</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="../../data/labs.js"></script>
+  <script src="../../assets/js/site.js"></script>
+  <script src="lab.js"></script>
+</body>
+</html>

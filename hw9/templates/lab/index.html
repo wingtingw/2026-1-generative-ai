@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<!--
+  Lab 模板（AGENTS.md §6）
+  使用方式：複製整個 templates/lab/ 到 labs/NN-slug/，然後把所有 TODO 換掉。
+  - 標題、摘要、標籤不要寫在這裡，寫在 data/labs.js（site.js 會自動產生標頭）
+  - 7 個 section 的 id 與順序不可以改，scripts/check_labs.py 會檢查
+-->
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lab TODO · CUDA Playbook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="../../assets/css/style.css">
+</head>
+<body data-page="lab" data-lab="TODO-NN-slug" data-root="../../">
+  <main class="wrap">
+    <div id="lab-head"></div>
+
+    <section class="block" id="goal">
+      <h2 data-label="1">目標</h2>
+      <p class="goal">TODO：一句話說明讀完這頁之後能理解什麼。</p>
+    </section>
+
+    <section class="block" id="concept">
+      <h2 data-label="2">概念</h2>
+      <p>TODO：2～4 段說明。第一次出現的英文術語用 <code>code</code> 標起來並給中文解釋。</p>
+      <div class="formula">TODO：核心公式（可選）</div>
+    </section>
+
+    <section class="block" id="playground">
+      <h2 data-label="3">互動區</h2>
+      <div class="playground">
+        <div class="controls" id="controls"><!-- lab.js 產生控制項 --></div>
+        <div id="viz"><!-- lab.js 產生視覺化 --></div>
+        <div class="readout" id="readout">把滑鼠移到格子上看詳細資訊</div>
+        <div class="stats" id="stats"></div>
+      </div>
+    </section>
+
+    <section class="block" id="code">
+      <h2 data-label="4">Kernel 程式碼</h2>
+      <pre class="code"><span class="c">// TODO：和互動區對應的最小 kernel</span></pre>
+    </section>
+
+    <section class="block" id="pitfalls">
+      <h2 data-label="5">常見誤區</h2>
+      <ul class="pitfalls">
+        <li><strong>TODO 誤區：</strong>為什麼錯、正確觀念是什麼。</li>
+      </ul>
+    </section>
+
+    <section class="block" id="check">
+      <h2 data-label="6">自我檢查</h2>
+      <details class="quiz">
+        <summary>TODO 題目（建議請讀者用互動區驗證）</summary>
+        <div class="answer">TODO 答案與理由</div>
+      </details>
+    </section>
+
+    <section class="block" id="refs">
+      <h2 data-label="7">參考資料</h2>
+      <ul>
+        <li><a href="https://docs.nvidia.com/cuda/cuda-c-programming-guide/">CUDA C++ Programming Guide</a> — TODO 對應章節</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="../../data/labs.js"></script>
+  <script src="../../assets/js/site.js"></script>
+  <script src="lab.js"></script>
+</body>
+</html>

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lab 02 · CUDA Playbook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="../../assets/css/style.css">
+</head>
+<body data-page="lab" data-lab="02-memory-coalescing" data-root="../../">
+  <main class="wrap">
+    <div id="lab-head"></div>
+
+    <section class="block" id="goal">
+      <h2 data-label="1">目標</h2>
+      <p class="goal">看懂一個 warp 的 32 個 thread 同時讀 global memory 時，存取模式如何決定 GPU 實際要搬多少資料。</p>
+    </section>
+
+    <section class="block" id="concept">
+      <h2 data-label="2">概念</h2>
+      <p>GPU 以 <code>warp</code>（32 個 thread 一組）為單位執行指令。當一個 warp 執行一道讀取指令時，32 個 <code>lane</code> 各自要一個位址，
+         硬體會把這些請求<strong>合併（coalesce）</strong>成最少的記憶體交易。global memory 的最小搬運單位是 32 bytes 的 <code>sector</code>，
+         只要一個 sector 裡有任何 1 byte 被用到，整個 32 bytes 都會被搬進來。</p>
+      <p>如果 32 個 lane 讀的是連續、對齊的 <code>float</code>（4 bytes），總共 128 bytes，剛好 4 個 sector，一點都沒浪費。
+         但如果每個 lane 間隔 <code>stride</code> 個元素去讀，同樣只用到 128 bytes 的資料，卻可能要搬 32 個 sector（1024 bytes）。</p>
+      <div class="formula">位址(lane) = (lane × <span class="vx">stride</span> + <span class="vy">offset</span>) × sizeof(T)　　效率 = 請求的 bytes ÷ (sector 數 × 32)</div>
+    </section>
+
+    <section class="block" id="playground">
+      <h2 data-label="3">互動區</h2>
+      <div class="playground">
+        <div class="controls" id="controls"></div>
+        <div id="viz"></div>
+        <div class="readout" id="readout">把滑鼠移到 lane 或 sector 上看詳細資訊</div>
+        <div class="stats" id="stats"></div>
+      </div>
+      <p class="callout tip">這裡是簡化模型：只計算一個 warp、一道讀取指令碰到幾個 32-byte sector，不考慮 cache 命中與其他 warp 的重複使用。</p>
+    </section>
+
+    <section class="block" id="code">
+      <h2 data-label="4">Kernel 程式碼</h2>
+<pre class="code"><span class="k">__global__</span> <span class="k">void</span> stridedCopy(<span class="k">const float</span>* in, <span class="k">float</span>* out,
+                            <span class="k">int</span> stride, <span class="k">int</span> offset) {
+    <span class="k">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;
+    <span class="c">// stride = 1、offset = 0：同一個 warp 讀連續位址 → 完全 coalesced</span>
+    <span class="c">// stride 變大：lane 之間的位址拉開 → 碰到更多 sector，頻寬被浪費</span>
+    out[i] = in[i * stride + offset];
+}</pre>
+    </section>
+
+    <section class="block" id="pitfalls">
+      <h2 data-label="5">常見誤區</h2>
+      <ul class="pitfalls">
+        <li><strong>「每個 thread 只讀 4 bytes，所以很省」：</strong>硬體搬的是整個 sector。stride 夠大時，每個 lane 都獨占一個 sector，實際流量是需要的 8 倍。</li>
+        <li><strong>2D 陣列用錯方向走訪：</strong>C/CUDA 是 row-major。讓相鄰 thread 處理同一 row 的相鄰欄（<code>col = threadIdx.x</code>），讀取才會連續；反過來讓相鄰 thread 走同一欄，就等於 stride = 寬度。</li>
+        <li><strong>以為只要沒有 stride 就一定最好：</strong>起始位址沒有對齊（offset ≠ 0）也會多碰一個 sector。效率從 100% 掉到 80%，雖然不嚴重，但在頻寬瓶頸的 kernel 裡看得出來。</li>
+      </ul>
+    </section>
+
+    <section class="block" id="check">
+      <h2 data-label="6">自我檢查</h2>
+      <details class="quiz">
+        <summary>float、stride = 2、offset = 0，一個 warp 會碰到幾個 sector？效率多少？</summary>
+        <div class="answer">位址橫跨 0～248 bytes，共 8 個 sector（256 bytes），只用到 128 bytes，效率 50%。</div>
+      </details>
+      <details class="quiz">
+        <summary>stride 從 8 調到 32，sector 數還會增加嗎？為什麼？</summary>
+        <div class="answer">不會。float 的 stride = 8 時相鄰 lane 已經差 32 bytes，每個 lane 各自落在不同 sector，總共 32 個，已經是一個 warp 的上限。再拉大 stride 只是 sector 離得更遠。</div>
+      </details>
+      <details class="quiz">
+        <summary>把型別換成 double、stride = 1，效率還是 100% 嗎？</summary>
+        <div class="answer">是。32 × 8 = 256 bytes，剛好 8 個 sector，沒有浪費。只是一次要搬的量變成兩倍。</div>
+      </details>
+    </section>
+
+    <section class="block" id="refs">
+      <h2 data-label="7">參考資料</h2>
+      <ul>
+        <li><a href="https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/">CUDA C++ Best Practices Guide</a> — Memory Optimizations：Coalesced Access to Global Memory</li>
+        <li><a href="https://docs.nvidia.com/cuda/cuda-c-programming-guide/">CUDA C++ Programming Guide</a> — Device Memory Accesses</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="../../data/labs.js"></script>
+  <script src="../../assets/js/site.js"></script>
+  <script src="lab.js"></script>
+</body>
+</html>

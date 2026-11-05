@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lab 03 · CUDA Playbook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="../../assets/css/style.css">
+</head>
+<body data-page="lab" data-lab="03-warp-divergence" data-root="../../">
+  <main class="wrap">
+    <div id="lab-head"></div>
+
+    <section class="block" id="goal">
+      <h2 data-label="1">目標</h2>
+      <p class="goal">理解為什麼同一個 warp 裡的 thread 走不同的 if/else 分支會變慢，以及怎麼讓分支條件「對齊 warp」。</p>
+    </section>
+
+    <section class="block" id="concept">
+      <h2 data-label="2">概念</h2>
+      <p>GPU 用 <code>SIMT</code>（Single Instruction, Multiple Threads）的方式執行：一個 warp 的 32 個 lane 在同一時間執行<strong>同一道指令</strong>。
+         如果遇到 <code>if</code>，而 warp 裡有些 lane 條件成立、有些不成立，硬體沒辦法同時跑兩條路，只好<strong>輪流</strong>執行：
+         先跑 if 那條路（不成立的 lane 被遮蔽、閒著），再跑 else 那條路（換另一批 lane 閒著）。這就是 <code>warp divergence</code>（warp 分歧）。</p>
+      <p>重點是「同一個 warp 內」。如果整個 warp 的條件都一樣，例如用 <code>threadIdx.x / 32</code>（warp 編號）來分支，
+         每個 warp 只會走一條路，就完全沒有分歧。</p>
+      <div class="formula">SIMT 效率 = 有在工作的 lane 次數 ÷ (32 × 實際執行的路徑數)</div>
+    </section>
+
+    <section class="block" id="playground">
+      <h2 data-label="3">互動區</h2>
+      <div class="playground">
+        <div class="controls" id="controls"></div>
+        <div id="viz"></div>
+        <div class="readout" id="readout">把滑鼠移到 lane 上看詳細資訊</div>
+        <div class="stats" id="stats"></div>
+      </div>
+      <p class="callout tip">簡化假設：一個 block 有 64 個 thread（2 個 warp），if 和 else 的工作量一樣。沒有任何 lane 要走的路徑會被直接跳過，不花時間。</p>
+    </section>
+
+    <section class="block" id="code">
+      <h2 data-label="4">Kernel 程式碼</h2>
+<pre class="code"><span class="k">__global__</span> <span class="k">void</span> branchy(<span class="k">float</span>* a) {
+    <span class="k">int</span> tid = threadIdx.x;
+    <span class="k">if</span> (tid % <span class="n">2</span> == <span class="n">0</span>) {        <span class="c">// ❌ 每個 warp 裡一半成立、一半不成立 → 兩條路都要跑</span>
+        a[tid] = pathA(a[tid]);
+    } <span class="k">else</span> {
+        a[tid] = pathB(a[tid]);
+    }
+}
+
+<span class="c">// ✅ 改成以 warp 為單位分支：同一個 warp 的 32 個 lane 條件相同</span>
+<span class="k">int</span> warpId = threadIdx.x / <span class="n">32</span>;
+<span class="k">if</span> (warpId % <span class="n">2</span> == <span class="n">0</span>) { <span class="c">/* pathA */</span> } <span class="k">else</span> { <span class="c">/* pathB */</span> }</pre>
+    </section>
+
+    <section class="block" id="pitfalls">
+      <h2 data-label="5">常見誤區</h2>
+      <ul class="pitfalls">
+        <li><strong>「有 if 就一定會 divergence」：</strong>只有同一個 warp 內的 lane 意見不一致才會。條件在整個 warp 一致（例如以 warp 編號或 blockIdx 分支）就沒有代價。</li>
+        <li><strong>「divergence 會讓結果算錯」：</strong>不會，結果一樣正確，只是慢。被遮蔽的 lane 只是在那段時間不寫入結果。</li>
+        <li><strong>不同 block 之間也會互相拖累：</strong>不會。divergence 是 warp 內的事，不同 warp、不同 block 各自排程。</li>
+      </ul>
+      <p class="callout warn">很短的分支，編譯器可能直接改成 predication（兩邊都算、再挑結果），所以實測不一定會看到明顯差距。分支裡的工作越多，divergence 的代價越明顯。</p>
+    </section>
+
+    <section class="block" id="check">
+      <h2 data-label="6">自我檢查</h2>
+      <details class="quiz">
+        <summary>條件 <code>tid &lt; 16</code>，64 個 thread，總共要執行幾條路徑？SIMT 效率多少？</summary>
+        <div class="answer">warp 0 一半成立一半不成立，要跑 2 條；warp 1 全部不成立，只跑 else 1 條。共 3 條路徑，效率 = 64 ÷ (32 × 3) ≈ 66.7%。</div>
+      </details>
+      <details class="quiz">
+        <summary>條件 <code>tid &lt; 32</code> 和 <code>tid &lt; 40</code>，哪一個有 divergence？</summary>
+        <div class="answer"><code>tid &lt; 32</code> 剛好切在 warp 邊界，沒有 divergence（100%）；<code>tid &lt; 40</code> 讓 warp 1 的前 8 個 lane 成立、後 24 個不成立，warp 1 要跑兩次。</div>
+      </details>
+      <details class="quiz">
+        <summary>資料相依的條件（例如 <code>a[tid] &gt; 0</code>）要怎麼減少 divergence？</summary>
+        <div class="answer">常見做法是先把資料排序或分組，讓同類的資料落在同一個 warp，或是重寫成不需要分支的算術（例如用 <code>fmaxf</code> 取代 if）。</div>
+      </details>
+    </section>
+
+    <section class="block" id="refs">
+      <h2 data-label="7">參考資料</h2>
+      <ul>
+        <li><a href="https://docs.nvidia.com/cuda/cuda-c-programming-guide/">CUDA C++ Programming Guide</a> — Hardware Implementation：SIMT Architecture</li>
+        <li><a href="https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/">CUDA C++ Best Practices Guide</a> — Control Flow：Branching and Divergence</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="../../data/labs.js"></script>
+  <script src="../../assets/js/site.js"></script>
+  <script src="lab.js"></script>
+</body>
+</html>
